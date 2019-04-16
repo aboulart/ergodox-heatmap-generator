@@ -5,8 +5,12 @@ require "sqlite3"
 require "nokogiri"
 require "color"
 
-MAX_RED=0
+mod_keys = [
+  { row: 4, col: 4 },
+  { row: 4, col: 9 }
+]
 
+layer = ARGV.length ? ARGV[0].to_i : 0
 DB = Sequel.sqlite("/usr/local/heatmap-generator/data/db.sqlite3")
 
 class Reading < Sequel::Model(:readings)
@@ -28,18 +32,24 @@ end
 
 doc = Nokogiri::XML(File.read("/usr/local/heatmap-generator/app/ergodox.svg"))
 
-qwerty_readings = Reading.where(layer: "QWERTY").order(Sequel.desc(:n))
-max_reading = Reading.where(layer: "QWERTY").max(:n)
+readings = Reading.where(layer: layer).to_a.select{ |r| !mod_keys.include?(row: r.row, col: r.col) }
+max_reading = readings.max_by{ |r| r.n }
 
 doc.xpath("//xmlns:rect[@data-col and @data-row]").each do |el|
   row = el.attributes["data-row"].value.to_i
   col = el.attributes["data-col"].value.to_i
 
-  reading = Reading.find(col: col, row: row, layer: "QWERTY")
+  reading = Reading.find(col: col, row: row, layer: layer)
 
   value = reading ? reading.n : 0
 
-  el.set_attribute("fill", heatmap_color(value: value, max: max_reading))
+  tx = el.attributes["x"].value.to_i + 2
+  ty = el.attributes["y"].value.to_i + 12
+  el.add_next_sibling("<text x=\"#{tx}\" y=\"#{ty}\">" + value.to_s + "</text>")
+
+  if !mod_keys.include?(row: row, col: col)
+    el.set_attribute("fill", heatmap_color(value: value, max: max_reading.n))
+  end
 end
 
-File.write("heatmap.base-layer.svg", doc.to_xml)
+File.write("heatmap-layer-" + layer.to_s + ".svg", doc.to_xml)
